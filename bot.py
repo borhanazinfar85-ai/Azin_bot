@@ -1,9 +1,11 @@
 import asyncio
+import os
+from aiohttp import web
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 
-#توکن ربات خود را اینجا وارد کنید
+# توکن ربات خود را اینجا وارد کنید
 TOKEN = "8799172276:AAFxRorT4KCwi4QrXHbusSrzPPaC-8fowY4"
 
 bot = Bot(token=TOKEN)
@@ -39,8 +41,25 @@ async def start_command(message: Message):
     )
     await message.answer(welcome_text, reply_markup=get_main_menu())
 
+# یک وب‌سرور کوچک برای راضی کردن رندر روی پورت دلخواه
+async def handle(request):
+    return web.Response(text="Azin Bot is running!")
+
+async def web_server():
+    app = web.Application()
+    app.router.add_get("/", handle)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", 10000))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+
 async def main():
-    await dp.start_polling(bot)
+    # اجرای همزمان ربات و وب‌سرور
+    await asyncio.gather(
+        web_server(),
+        dp.start_polling(bot)
+    )
 
 if __name__ == "__main__":
     asyncio.run(main())
