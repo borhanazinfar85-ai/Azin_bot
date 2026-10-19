@@ -8,8 +8,8 @@ import time
 # ------------------ دریافت اطلاعات حساس از سرور ------------------
 TOKEN = os.environ.get("BOT_TOKEN", "8799172276:AAFxRorT4KCwi4QrXHbusSrzPPaC-8fowY4")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "5992998183"))
-CARD_NUMBER = os.environ.get("CARD_NUMBER", "5859831873943517")
-CARD_NAME = "برهان آذین فر"
+DEFAULT_CARD_NUMBER = os.environ.get("CARD_NUMBER", "5859831873943517")
+DEFAULT_CARD_NAME = "برهان آذین فر"
 SUPPORT_USERNAME = "@Brn_Az"
 
 URL = f"https://api.telegram.org/bot{TOKEN}"
@@ -56,6 +56,15 @@ def init_db():
             numeric_price INTEGER
         )
     ''')
+
+    # جدول اطلاعات کارت بانکی
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS card_info (
+            id INTEGER PRIMARY KEY,
+            card_number TEXT,
+            card_name TEXT
+        )
+    ''')
     
     # ثبت پیش‌فرض پلن‌ها در صورت خالی بودن دیتابیس
     default_plans = [
@@ -72,12 +81,26 @@ def init_db():
     for pk, t, p, np in default_plans:
         cursor.execute("INSERT OR IGNORE INTO plans VALUES (?, ?, ?, ?)", (pk, t, p, np))
         
+    # ثبت پیش‌فرض شماره کارت
+    cursor.execute("INSERT OR IGNORE INTO card_info (id, card_number, card_name) VALUES (1, ?, ?)", 
+                   (DEFAULT_CARD_NUMBER, DEFAULT_CARD_NAME))
+
     conn.commit()
     conn.close()
 
 init_db()
 
 user_sessions = {}
+
+def get_card_info():
+    conn = sqlite3.connect("database.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT card_number, card_name FROM card_info WHERE id = 1")
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return row[0], row[1]
+    return DEFAULT_CARD_NUMBER, DEFAULT_CARD_NAME
 
 def get_plans():
     conn = sqlite3.connect("database.db")
@@ -137,6 +160,7 @@ def run_bot():
                 for update in data.get("result", []):
                     offset = update["update_id"] + 1
                     PLANS = get_plans()
+                    CARD_NUMBER, CARD_NAME = get_card_info()
                     
                     if "message" in update:
                         msg = update["message"]
@@ -145,7 +169,6 @@ def run_bot():
                         first_name = msg["from"].get("first_name", "کاربر")
                         username = msg["from"].get("username", "ندارد")
                         
-                        # ثبت کاربر در دیتابیس
                         conn = sqlite3.connect("database.db")
                         cursor = conn.cursor()
                         cursor.execute("INSERT OR IGNORE INTO users VALUES (?, ?, ?, ?)", 
@@ -172,6 +195,24 @@ def run_bot():
 
                             elif text == "/help":
                                 send_msg(chat_id, f"💬 <b>پشتیبانی فروشگاه آذین:</b>\n\n🆔 {SUPPORT_USERNAME}")
+
+                            elif user_sessions.get(chat_id, {}).get("step") == "admin_changing_card":
+                                try:
+                                    new_card = text.replace(" ", "").replace("-", "").strip()
+                                    if not new_card.isdigit() or len(new_card) != 16:
+                                        send_msg(chat_id, "⚠️ شماره کارت باید ۱۶ رقم باشد. لطفاً دوباره وارد کنید:")
+                                    else:
+                                        conn = sqlite3.connect("database.db")
+                                        cursor = conn.cursor()
+                                        cursor.execute("UPDATE card_info SET card_number = ? WHERE id = 1", (new_card,))
+                                        conn.commit()
+                                        conn.close()
+                                        
+                                        send_msg(chat_id, f"✅ <b>شماره کارت جدید با موفقیت ثبت شد:</b>\n<code>{new_card}</code>")
+                                        user_sessions[chat_id] = {}
+                                        show_admin_panel(chat_id)
+                                except Exception as e:
+                                    send_msg(chat_id, f"خطا در ثبت شماره کارت: {e}")
 
                             elif user_sessions.get(chat_id, {}).get("step") == "admin_changing_price":
                                 p_key = user_sessions[chat_id]["target_plan"]
@@ -467,6 +508,11 @@ def run_bot():
                         elif data_key == "admin_panel" and chat_id == ADMIN_ID:
                             show_admin_panel(chat_id, message_id)
 
+                        elif data_key == "admin_manage_card" and chat_id == ADMIN_ID:
+                            user_sessions[chat_id] = {"step": "admin_changing_card"}
+                            c_num, c_name = get_card_info()
+                            send_msg(chat_id, f"💳 <b>اطلاعات فعلی کارت:</b>\n\n👤 به نام: {c_name}\n🔢 شماره کارت: <code>{c_num}</code>\n\nلطفاً <b>شماره کارت ۱۶ رقمی جدید</b> را ارسال کنید:")
+
                         elif data_key == "admin_manage_plans" and chat_id == ADMIN_ID:
                             buttons = []
                             for p_key, p_val in PLANS.items():
@@ -521,6 +567,7 @@ def run_bot():
             time.sleep(3)
 
 def show_admin_panel(chat_id, message_id=None):
+    c_num, c_name = get_card_info()
     conn = sqlite3.connect("database.db")
     cursor = conn.cursor()
     cursor.execute("SELECT COUNT(*) FROM orders")
@@ -536,7 +583,8 @@ def show_admin_panel(chat_id, message_id=None):
     conn.close()
 
     admin_text = (
-        f"⚙️ <b>پنل مدیریت پیشرفته فروشگاه آذین (SQLite)</b>\n\n"
+        f"⚙️ <b>پنل مدیریت پیشرفته فروشگاه آذین</b>\n\n"
+        f"💳 <b>شماره کارت فعال:</b> <code>{c_num}</code> ({c_name})\n\n"
         f"📊 <b>آمار کل فروشگاه:</b>\n"
         f"▫️ کل سفارشات: {total_orders}\n"
         f"⏳ در انتظار بررسی: {pending_orders}\n"
@@ -546,6 +594,7 @@ def show_admin_panel(chat_id, message_id=None):
     )
     kb = {
         "inline_keyboard": [
+            [{"text": "💳 تغییر شماره کارت", "callback_data": "admin_manage_card"}],
             [{"text": "💰 مدیریت و تغییر قیمت پلن‌ها", "callback_data": "admin_manage_plans"}],
             [{"text": "📋 لیست جزئیات تمامی سفارشات", "callback_data": "admin_sold_list"}],
             [{"text": "🔄 بروزرسانی آمار", "callback_data": "admin_panel"}],
