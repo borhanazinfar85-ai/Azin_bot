@@ -9,7 +9,7 @@ import time
 # ------------------ دریافت اطلاعات حساس از سرور ------------------
 TOKEN = os.environ.get("BOT_TOKEN", "8799172276:AAFxRorT4KCwi4QrXHbusSrzPPaC-8fowY4")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "5992998183"))
-DATABASE_URL = "postgresql://postgres:Borhan27555@aws-0-eu-central-1.pooler.supabase.com:6543/postgres"
+DATABASE_URL = "postgresql://postgres.jxvnlwocfqrqjoarifty:Borhan27555@aws-0-eu-west-1.pooler.supabase.com:6543/postgres"
 DEFAULT_CARD_NUMBER = os.environ.get("CARD_NUMBER", "5859831873943517")
 DEFAULT_CARD_NAME = "برهان آذین فر"
 SUPPORT_USERNAME = "@Brn_Az"
