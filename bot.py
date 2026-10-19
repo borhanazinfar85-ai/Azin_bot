@@ -1,5 +1,6 @@
 import os
-import sqlite3
+import psycopg2
+from urllib.parse import urlparse
 import requests
 from aiohttp import web
 import threading
@@ -8,21 +9,34 @@ import time
 # ------------------ دریافت اطلاعات حساس از سرور ------------------
 TOKEN = os.environ.get("BOT_TOKEN", "8799172276:AAFxRorT4KCwi4QrXHbusSrzPPaC-8fowY4")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "5992998183"))
+DATABASE_URL = os.environ.get("postgresql://postgres:[YOUR-PASSWORD]@db.jxvnlwocfqrqjoarifty.supabase.co:5432/postgres")
 DEFAULT_CARD_NUMBER = os.environ.get("CARD_NUMBER", "5859831873943517")
 DEFAULT_CARD_NAME = "برهان آذین فر"
 SUPPORT_USERNAME = "@Brn_Az"
 
 URL = f"https://api.telegram.org/bot{TOKEN}"
 
-# ------------------ راه‌اندازی دیتابیس دائمی SQLite ------------------
+# ------------------ اتصال به دیتابیس ابری Supabase ------------------
+def get_db_connection():
+    parsed_url = urlparse(DATABASE_URL)
+    conn = psycopg2.connect(
+        database=parsed_url.path[1:],
+        user=parsed_url.username,
+        password=parsed_url.password,
+        host=parsed_url.hostname,
+        port=parsed_url.port,
+        sslmode='require'
+    )
+    return conn
+
 def init_db():
-    conn = sqlite3.connect("database.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     # جدول کاربران
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
+            user_id BIGINT PRIMARY KEY,
             first_name TEXT,
             username TEXT,
             join_date TEXT
@@ -33,7 +47,7 @@ def init_db():
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS orders (
             order_id TEXT PRIMARY KEY,
-            user_id INTEGER,
+            user_id BIGINT,
             first_name TEXT,
             username TEXT,
             plan TEXT,
@@ -66,7 +80,7 @@ def init_db():
         )
     ''')
     
-    # ثبت پیش‌فرض پلن‌ها در صورت خالی بودن دیتابیس
+    # ثبت پیش‌فرض پلن‌ها
     default_plans = [
         ("multi_10g", "مولتی لوکیشن | ۱۰ گیگ - ۳۰ روزه", "60,000", 60000),
         ("multi_20g", "مولتی لوکیشن | ۲۰ گیگ - ۳۰ روزه", "110,000", 110000),
@@ -79,13 +93,14 @@ def init_db():
         ("germany_30d", "المان نامحدود | تک کاربره - ۳۰ روزه", "90,000", 90000)
     ]
     for pk, t, p, np in default_plans:
-        cursor.execute("INSERT OR IGNORE INTO plans VALUES (?, ?, ?, ?)", (pk, t, p, np))
+        cursor.execute("INSERT INTO plans (plan_key, title, price, numeric_price) VALUES (%s, %s, %s, %s) ON CONFLICT (plan_key) DO NOTHING", (pk, t, p, np))
         
     # ثبت پیش‌فرض شماره کارت
-    cursor.execute("INSERT OR IGNORE INTO card_info (id, card_number, card_name) VALUES (1, ?, ?)", 
+    cursor.execute("INSERT INTO card_info (id, card_number, card_name) VALUES (1, %s, %s) ON CONFLICT (id) DO NOTHING", 
                    (DEFAULT_CARD_NUMBER, DEFAULT_CARD_NAME))
 
     conn.commit()
+    cursor.close()
     conn.close()
 
 init_db()
@@ -93,20 +108,22 @@ init_db()
 user_sessions = {}
 
 def get_card_info():
-    conn = sqlite3.connect("database.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT card_number, card_name FROM card_info WHERE id = 1")
     row = cursor.fetchone()
+    cursor.close()
     conn.close()
     if row:
         return row[0], row[1]
     return DEFAULT_CARD_NUMBER, DEFAULT_CARD_NAME
 
 def get_plans():
-    conn = sqlite3.connect("database.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT plan_key, title, price, numeric_price FROM plans")
     rows = cursor.fetchall()
+    cursor.close()
     conn.close()
     return {r[0]: {"title": r[1], "price": r[2], "numeric_price": r[3]} for r in rows}
 
@@ -151,7 +168,7 @@ def get_main_keyboard(user_id):
 def run_bot():
     set_bot_commands()
     offset = 0
-    print("Telegram bot started with SQLite storage...")
+    print("Telegram bot started with Supabase cloud database...")
     while True:
         try:
             response = requests.get(f"{URL}/getUpdates", params={"offset": offset, "timeout": 30})
@@ -169,11 +186,12 @@ def run_bot():
                         first_name = msg["from"].get("first_name", "کاربر")
                         username = msg["from"].get("username", "ندارد")
                         
-                        conn = sqlite3.connect("database.db")
+                        conn = get_db_connection()
                         cursor = conn.cursor()
-                        cursor.execute("INSERT OR IGNORE INTO users VALUES (?, ?, ?, ?)", 
+                        cursor.execute("INSERT INTO users (user_id, first_name, username, join_date) VALUES (%s, %s, %s, %s) ON CONFLICT (user_id) DO NOTHING", 
                                        (chat_id, first_name, username, time.strftime("%Y-%m-%d %H:%M")))
                         conn.commit()
+                        cursor.close()
                         conn.close()
 
                         if "text" in msg:
@@ -202,10 +220,11 @@ def run_bot():
                                     if not new_card.isdigit() or len(new_card) != 16:
                                         send_msg(chat_id, "⚠️ شماره کارت باید ۱۶ رقم باشد. لطفاً دوباره وارد کنید:")
                                     else:
-                                        conn = sqlite3.connect("database.db")
+                                        conn = get_db_connection()
                                         cursor = conn.cursor()
-                                        cursor.execute("UPDATE card_info SET card_number = ? WHERE id = 1", (new_card,))
+                                        cursor.execute("UPDATE card_info SET card_number = %s WHERE id = 1", (new_card,))
                                         conn.commit()
+                                        cursor.close()
                                         conn.close()
                                         
                                         send_msg(chat_id, f"✅ <b>شماره کارت جدید با موفقیت ثبت شد:</b>\n<code>{new_card}</code>")
@@ -218,11 +237,12 @@ def run_bot():
                                 p_key = user_sessions[chat_id]["target_plan"]
                                 try:
                                     new_price = int(text.replace(",", "").strip())
-                                    conn = sqlite3.connect("database.db")
+                                    conn = get_db_connection()
                                     cursor = conn.cursor()
-                                    cursor.execute("UPDATE plans SET price = ?, numeric_price = ? WHERE plan_key = ?", 
+                                    cursor.execute("UPDATE plans SET price = %s, numeric_price = %s WHERE plan_key = %s", 
                                                    (f"{new_price:,}", new_price, p_key))
                                     conn.commit()
+                                    cursor.close()
                                     conn.close()
                                     
                                     send_msg(chat_id, f"✅ <b>قیمت پلن با موفقیت به {new_price:,} تومان تغییر یافت.</b>")
@@ -260,10 +280,11 @@ def run_bot():
                                 target_user_id = user_sessions[chat_id]["target_user"]
                                 order_id = user_sessions[chat_id]["order_id"]
                                 
-                                conn = sqlite3.connect("database.db")
+                                conn = get_db_connection()
                                 cursor = conn.cursor()
-                                cursor.execute("UPDATE orders SET status = 'Approved', config = ? WHERE order_id = ?", (text, order_id))
+                                cursor.execute("UPDATE orders SET status = 'Approved', config = %s WHERE order_id = %s", (text, order_id))
                                 conn.commit()
+                                cursor.close()
                                 conn.close()
 
                                 client_msg = (
@@ -285,12 +306,13 @@ def run_bot():
                             order_id = str(int(time.time()))
                             order_date = time.strftime("%Y-%m-%d %H:%M")
                             
-                            conn = sqlite3.connect("database.db")
+                            conn = get_db_connection()
                             cursor = conn.cursor()
-                            cursor.execute("INSERT INTO orders VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending', 'در انتظار تحویل')",
+                            cursor.execute("INSERT INTO orders VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'Pending', 'در انتظار تحویل')",
                                            (order_id, chat_id, first_name, username, plan_info['title'], session['count'], 
                                             session['server_name'], session['total_price_str'], session['total_price_num'], order_date))
                             conn.commit()
+                            cursor.close()
                             conn.close()
 
                             send_msg(chat_id, "💌 <b>فیش واریزی شما دریافت شد!</b>\n\nدرخواست شما برای ادمین ارسال گردید و پس از تایید سریعاً سرویس تحویل می‌شود.🌹")
@@ -432,12 +454,13 @@ def run_bot():
                             edit_msg(chat_id, message_id, apps_text, kb)
 
                         elif data_key == "account":
-                            conn = sqlite3.connect("database.db")
+                            conn = get_db_connection()
                             cursor = conn.cursor()
-                            cursor.execute("SELECT first_name, username, join_date FROM users WHERE user_id = ?", (chat_id,))
+                            cursor.execute("SELECT first_name, username, join_date FROM users WHERE user_id = %s", (chat_id,))
                             u = cursor.fetchone()
-                            cursor.execute("SELECT COUNT(*) FROM orders WHERE user_id = ? AND status = 'Approved'", (chat_id,))
+                            cursor.execute("SELECT COUNT(*) FROM orders WHERE user_id = %s AND status = 'Approved'", (chat_id,))
                             order_count = cursor.fetchone()[0]
+                            cursor.close()
                             conn.close()
 
                             if u:
@@ -454,10 +477,11 @@ def run_bot():
                                 edit_msg(chat_id, message_id, acc_text, kb)
 
                         elif data_key == "my_services":
-                            conn = sqlite3.connect("database.db")
+                            conn = get_db_connection()
                             cursor = conn.cursor()
-                            cursor.execute("SELECT plan, server_name, date, config FROM orders WHERE user_id = ? AND status = 'Approved'", (chat_id,))
+                            cursor.execute("SELECT plan, server_name, date, config FROM orders WHERE user_id = %s AND status = 'Approved'", (chat_id,))
                             services = cursor.fetchall()
+                            cursor.close()
                             conn.close()
                             
                             if not services:
@@ -481,10 +505,11 @@ def run_bot():
                                 "order_id": order_id
                             }
                             
-                            conn = sqlite3.connect("database.db")
+                            conn = get_db_connection()
                             cursor = conn.cursor()
-                            cursor.execute("SELECT user_id, first_name FROM orders WHERE order_id = ?", (order_id,))
+                            cursor.execute("SELECT user_id, first_name FROM orders WHERE order_id = %s", (order_id,))
                             ord_data = cursor.fetchone()
+                            cursor.close()
                             conn.close()
                             
                             if ord_data:
@@ -493,12 +518,13 @@ def run_bot():
 
                         elif data_key.startswith("reject_"):
                             order_id = data_key.split("_")[1]
-                            conn = sqlite3.connect("database.db")
+                            conn = get_db_connection()
                             cursor = conn.cursor()
-                            cursor.execute("UPDATE orders SET status = 'Rejected' WHERE order_id = ?", (order_id,))
-                            cursor.execute("SELECT user_id FROM orders WHERE order_id = ?", (order_id,))
+                            cursor.execute("UPDATE orders SET status = 'Rejected' WHERE order_id = %s", (order_id,))
+                            cursor.execute("SELECT user_id FROM orders WHERE order_id = %s", (order_id,))
                             uid = cursor.fetchone()
                             conn.commit()
+                            cursor.close()
                             conn.close()
                             
                             if uid:
@@ -530,10 +556,11 @@ def run_bot():
                             send_msg(chat_id, f"✍️ <b>قیمت جدید را برای پلن زیر به «تومان» وارد کنید:</b>\n\n🔹 {PLANS[p_key]['title']}\n💵 قیمت فعلی: {PLANS[p_key]['price']} تومان")
 
                         elif data_key == "admin_sold_list" and chat_id == ADMIN_ID:
-                            conn = sqlite3.connect("database.db")
+                            conn = get_db_connection()
                             cursor = conn.cursor()
                             cursor.execute("SELECT order_id, first_name, username, user_id, date, plan, count, server_name, price, status FROM orders")
                             orders = cursor.fetchall()
+                            cursor.close()
                             conn.close()
 
                             if not orders:
@@ -568,7 +595,7 @@ def run_bot():
 
 def show_admin_panel(chat_id, message_id=None):
     c_num, c_name = get_card_info()
-    conn = sqlite3.connect("database.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT COUNT(*) FROM orders")
     total_orders = cursor.fetchone()[0]
@@ -580,10 +607,11 @@ def show_admin_panel(chat_id, message_id=None):
     rejected_orders = cursor.fetchone()[0]
     cursor.execute("SELECT SUM(price_num) FROM orders WHERE status = 'Approved'")
     total_income = cursor.fetchone()[0] or 0
+    cursor.close()
     conn.close()
 
     admin_text = (
-        f"⚙️ <b>پنل مدیریت پیشرفته فروشگاه آذین</b>\n\n"
+        f"⚙️ <b>پنل مدیریت پیشرفته فروشگاه آذین (Supabase)</b>\n\n"
         f"💳 <b>شماره کارت فعال:</b> <code>{c_num}</code> ({c_name})\n\n"
         f"📊 <b>آمار کل فروشگاه:</b>\n"
         f"▫️ کل سفارشات: {total_orders}\n"
