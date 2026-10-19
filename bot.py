@@ -13,8 +13,22 @@ DATABASE_URL = os.environ.get("postgresql://postgres:[YOUR-PASSWORD]@db.jxvnlwoc
 DEFAULT_CARD_NUMBER = os.environ.get("CARD_NUMBER", "5859831873943517")
 DEFAULT_CARD_NAME = "برهان آذین فر"
 SUPPORT_USERNAME = "@Brn_Az"
+RENDER_URL = os.environ.get("https://azin-bot.onrender.com")  # آدرس وب‌سرویس رندر برای پینگ خودکار
 
 URL = f"https://api.telegram.org/bot{TOKEN}"
+
+# ------------------ پینگر خودکار برای بیدار نگه داشتن سرور ------------------
+def keep_alive():
+    if not RENDER_URL:
+        print("متغیر RENDER_EXTERNAL_URL تعریف نشده است؛ پینگر خودکار فعال نشد.")
+        return
+    while True:
+        try:
+            time.sleep(600)  # هر ۱۰ دقیقه (۶۰۰ ثانیه)
+            response = requests.get(RENDER_URL)
+            print(f"Self-ping sent to {RENDER_URL} | Status: {response.status_code}")
+        except Exception as e:
+            print(f"Self-ping failed: {e}")
 
 # ------------------ اتصال به دیتابیس ابری Supabase ------------------
 def get_db_connection():
@@ -641,8 +655,13 @@ app = web.Application()
 app.router.add_get("/", handle)
 
 if __name__ == "__main__":
+    # شروع ترد اصلی ربات
     bot_thread = threading.Thread(target=run_bot, daemon=True)
     bot_thread.start()
+
+    # شروع ترد پینگر خودکار جهت بیدار نگه داشتن سرور
+    ping_thread = threading.Thread(target=keep_alive, daemon=True)
+    ping_thread.start()
 
     port = int(os.environ.get("PORT", 10000))
     web.run_app(app, host="0.0.0.0", port=port)
