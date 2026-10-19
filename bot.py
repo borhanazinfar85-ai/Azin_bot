@@ -1,26 +1,16 @@
 import os
 import requests
 from aiohttp import web
+import threading
+import time
 
 TOKEN = "8799172276:AAFxRorT4KCwi4QrXHbusSrzPPaC-8fowY4"
 URL = f"https://api.telegram.org/bot{TOKEN}"
 
-# وب‌سرور برای راضی نگه داشتن رندر
-async def handle(request):
-    return web.Response(text="Azin Bot is running!")
-
-async def web_server():
-    app = web.Application()
-    app.router.add_get("/", handle)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = int(os.environ.get("PORT", 10000))
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
-
+# ۱. بخش ربات تلگرام که به صورت پس‌زمینه و مستقل کار می‌کند
 def run_bot():
     offset = 0
-    print("Bot started polling...")
+    print("Telegram bot started...")
     while True:
         try:
             response = requests.get(f"{URL}/getUpdates", params={"offset": offset, "timeout": 30})
@@ -34,7 +24,6 @@ def run_bot():
                         text = message["text"]
                         
                         if text == "/start":
-                            # ارسال دکمه‌های شیک منو
                             keyboard = {
                                 "inline_keyboard": [
                                     [
@@ -60,14 +49,21 @@ def run_bot():
                             }
                             requests.post(f"{URL}/sendMessage", json=payload)
         except Exception as e:
-            print(f"Error: {e}")
+            print(f"Bot Error: {e}")
+            time.sleep(3)
+
+# ۲. بخش وب‌سرور برای راضی نگه داشتن رندر
+async def handle(request):
+    return web.Response(text="Azin Bot is running!")
+
+app = web.Application()
+app.router.add_get("/", handle)
 
 if __name__ == "__main__":
-    import asyncio
-    loop = asyncio.get_event_loop()
-    loop.create_task(web_server())
-    
-    import threading
-    threading.Thread(target=run_bot, daemon=True).start()
-    
-    loop.run_forever()
+    # اجرای ربات در ترد جداگانه تا با وب‌سرور تداخل نداشته باشد
+    bot_thread = threading.Thread(target=run_bot, daemon=True)
+    bot_thread.start()
+
+    # اجرای وب‌سرور روی پورت رندر
+    port = int(os.environ.get("PORT", 10000))
+    web.run_app(app, host="0.0.0.0", port=port)
