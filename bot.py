@@ -25,6 +25,7 @@ stats_db = {
     "total_income": 0
 }
 
+# پلن‌ها (قابل تغییر از داخل ربات)
 PLANS = {
     "multi_10g": {"title": "مولتی لوکیشن | ۱۰ گیگ - ۳۰ روزه", "price": "60,000", "numeric_price": 60000},
     "multi_20g": {"title": "مولتی لوکیشن | ۲۰ گیگ - ۳۰ روزه", "price": "110,000", "numeric_price": 110000},
@@ -116,6 +117,21 @@ def run_bot():
                             elif text == "/help":
                                 send_msg(chat_id, f"💬 <b>پشتیبانی فروشگاه آذین:</b>\n\nهمکاران ما آماده پاسخگویی به سوالات شما هستند:\n🆔 {SUPPORT_USERNAME}")
 
+                            # تغییر قیمت پلن توسط ادمین
+                            elif user_sessions.get(chat_id, {}).get("step") == "admin_changing_price":
+                                p_key = user_sessions[chat_id]["target_plan"]
+                                try:
+                                    new_price = int(text.replace(",", "").strip())
+                                    PLANS[p_key]["numeric_price"] = new_price
+                                    PLANS[p_key]["price"] = f"{new_price:,}"
+                                    
+                                    send_msg(chat_id, f"✅ <b>قیمت پلن «{PLANS[p_key]['title']}» با موفقیت به {new_price:,} تومان تغییر یافت.</b>")
+                                    user_sessions[chat_id] = {}
+                                    show_admin_panel(chat_id)
+                                except ValueError:
+                                    send_msg(chat_id, "⚠️ لطفاً قیمت را فقط به صورت عدد (مثلاً 80000) وارد کنید:")
+
+                            # دریافت نام سرور از مشتری
                             elif user_sessions.get(chat_id, {}).get("step") == "wait_for_name":
                                 user_sessions[chat_id]["server_name"] = text
                                 user_sessions[chat_id]["step"] = "wait_for_receipt"
@@ -142,6 +158,7 @@ def run_bot():
                                 )
                                 send_msg(chat_id, fact_text)
 
+                            # ادمین در حال ارسال کانفیگ به مشتری
                             elif user_sessions.get(chat_id, {}).get("step") == "admin_sending_config":
                                 target_user_id = user_sessions[chat_id]["target_user"]
                                 order_id = user_sessions[chat_id]["order_id"]
@@ -239,9 +256,9 @@ def run_bot():
                         elif data_key == "cat_multi":
                             kb = {
                                 "inline_keyboard": [
-                                    [{"text": "۱۰ گیگ (۳۰ روزه) - ۶۰,۰۰۰ تومان", "callback_data": "plan_multi_10g"}],
-                                    [{"text": "۲۰ گیگ (۳۰ روزه) - ۱۱۰,۰۰۰ تومان", "callback_data": "plan_multi_20g"}],
-                                    [{"text": "۵۰ گیگ (۳۰ روزه) - ۲۰۰,۰۰۰ تومان", "callback_data": "plan_multi_50g"}],
+                                    [{"text": f"۱۰ گیگ (۳۰ روزه) - {PLANS['multi_10g']['price']} تومان", "callback_data": "plan_multi_10g"}],
+                                    [{"text": f"۲۰ گیگ (۳۰ روزه) - {PLANS['multi_20g']['price']} تومان", "callback_data": "plan_multi_20g"}],
+                                    [{"text": f"۵۰ گیگ (۳۰ روزه) - {PLANS['multi_50g']['price']} تومان", "callback_data": "plan_multi_50g"}],
                                     [{"text": "🔙 بازگشت", "callback_data": "buy_service"}]
                                 ]
                             }
@@ -250,9 +267,9 @@ def run_bot():
                         elif data_key == "cat_melli":
                             kb = {
                                 "inline_keyboard": [
-                                    [{"text": "۱۰ گیگ (۳۰ روزه) - ۷۰,۰۰۰ تومان", "callback_data": "plan_melli_10g"}],
-                                    [{"text": "۳۰ گیگ (۳۰ روزه) - ۱۲۰,۰۰۰ تومان", "callback_data": "plan_melli_30g"}],
-                                    [{"text": "۵۰ گیگ (۳۰ روزه) - ۲۱۰,۰۰۰ تومان", "callback_data": "plan_melli_50g"}],
+                                    [{"text": f"۱۰ گیگ (۳۰ روزه) - {PLANS['melli_10g']['price']} تومان", "callback_data": "plan_melli_10g"}],
+                                    [{"text": f"۳۰ گیگ (۳۰ روزه) - {PLANS['melli_30g']['price']} تومان", "callback_data": "plan_melli_30g"}],
+                                    [{"text": f"۵۰ گیگ (۳۰ روزه) - {PLANS['melli_50g']['price']} تومان", "callback_data": "plan_melli_50g"}],
                                     [{"text": "🔙 بازگشت", "callback_data": "buy_service"}]
                                 ]
                             }
@@ -261,7 +278,7 @@ def run_bot():
                         elif data_key == "cat_melli_unlim":
                             kb = {
                                 "inline_keyboard": [
-                                    [{"text": "۳۰ گیگ تایم نامحدود - ۱۷۰,۰۰۰ تومان", "callback_data": "plan_melli_unlim_30g"}],
+                                    [{"text": f"۳۰ گیگ تایم نامحدود - {PLANS['melli_unlim_30g']['price']} تومان", "callback_data": "plan_melli_unlim_30g"}],
                                     [{"text": "🔙 بازگشت", "callback_data": "buy_service"}]
                                 ]
                             }
@@ -270,7 +287,7 @@ def run_bot():
                         elif data_key == "cat_multi_unlim":
                             kb = {
                                 "inline_keyboard": [
-                                    [{"text": "۱۰۰ گیگ تایم نامحدود - ۳۰۰,۰۰۰ تومان", "callback_data": "plan_multi_unlim_100g"}],
+                                    [{"text": f"۱۰۰ گیگ تایم نامحدود - {PLANS['multi_unlim_100g']['price']} تومان", "callback_data": "plan_multi_unlim_100g"}],
                                     [{"text": "🔙 بازگشت", "callback_data": "buy_service"}]
                                 ]
                             }
@@ -279,7 +296,7 @@ def run_bot():
                         elif data_key == "cat_germany":
                             kb = {
                                 "inline_keyboard": [
-                                    [{"text": "حجم نامحدود (۳۰ روزه) - ۹۰,۰۰۰ تومان", "callback_data": "plan_germany_30d"}],
+                                    [{"text": f"حجم نامحدود (۳۰ روزه) - {PLANS['germany_30d']['price']} تومان", "callback_data": "plan_germany_30d"}],
                                     [{"text": "🔙 بازگشت", "callback_data": "buy_service"}]
                                 ]
                             }
@@ -391,15 +408,32 @@ def run_bot():
                         elif data_key == "admin_panel" and chat_id == ADMIN_ID:
                             show_admin_panel(chat_id)
 
+                        elif data_key == "admin_manage_plans" and chat_id == ADMIN_ID:
+                            # منوی ویرایش قیمت پلن‌ها
+                            buttons = []
+                            for p_key, p_val in PLANS.items():
+                                buttons.append([{"text": f"{p_val['title']} ({p_val['price']} تومان)", "callback_data": f"editplan_{p_key}"}])
+                            buttons.append([{"text": "🔙 بازگشت به پنل ادمین", "callback_data": "admin_panel"}])
+                            
+                            send_msg(chat_id, "💰 <b>لطفاً پلنی که قصد تغییر قیمت آن را دارید انتخاب کنید:</b>", {"inline_keyboard": buttons})
+
+                        elif data_key.startswith("editplan_") and chat_id == ADMIN_ID:
+                            p_key = data_key.replace("editplan_", "")
+                            user_sessions[chat_id] = {
+                                "step": "admin_changing_price",
+                                "target_plan": p_key
+                            }
+                            send_msg(chat_id, f"✍️ <b>قیمت جدید را برای پلن زیر به «تومان» وارد کنید:</b>\n\n🔹 {PLANS[p_key]['title']}\n💵 قیمت فعلی: {PLANS[p_key]['price']} تومان")
+
                         elif data_key == "admin_sold_list" and chat_id == ADMIN_ID:
                             if not orders_db:
                                 send_msg(chat_id, "📭 هیچ سفارشی ثبت نشده است.", {"inline_keyboard": [[{"text": "🔙 بازگشت", "callback_data": "admin_panel"}]]})
                             else:
                                 list_text = "📋 <b>لیست کامل سفارشات و فروش‌ها:</b>\n\n"
                                 for oid, o in orders_db.items():
-                                    status_emoji = "⏳" if o['status'] == "Pending" else ("✅" if o['status'] == "Approved" else "❌")
+                                    status_emoji = "⏳ در انتظار" if o['status'] == "Pending" else ("✅ تایید شده" if o['status'] == "Approved" else "❌ رد شده")
                                     list_text += (
-                                        f"{status_emoji} <b>سفارش #{oid}</b>\n"
+                                        f"<b>وضعیت: {status_emoji} (کد: #{oid})</b>\n"
                                         f"👤 کاربر: {o['first_name']} (@{o['username']})\n"
                                         f"🔹 سرویس: {o['plan']}\n"
                                         f"🔢 تعداد: {o['count']} | نام سرور: {o['server_name']}\n"
@@ -432,6 +466,7 @@ def show_admin_panel(chat_id):
     )
     kb = {
         "inline_keyboard": [
+            [{"text": "💰 مدیریت قیمت پلن‌ها", "callback_data": "admin_manage_plans"}],
             [{"text": "📋 لیست سرویس‌های فروخته شده", "callback_data": "admin_sold_list"}],
             [{"text": "🔄 بروزرسانی آمار", "callback_data": "admin_panel"}],
             [{"text": "🏠 منوی اصلی", "callback_data": "back_home"}]
