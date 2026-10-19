@@ -8,7 +8,7 @@ import time
 TOKEN = "8799172276:AAFxRorT4KCwi4QrXHbusSrzPPaC-8fowY4"
 ADMIN_ID = 5992998183  # <--- آیدی عددی تلگرام خودتان
 CARD_NUMBER = "5859831873943517"
-CARD_NAME = "برهان آذین فر"
+CARD_NAME = " آذین فر"
 SUPPORT_USERNAME = "@Brn_Az"
 
 URL = f"https://api.telegram.org/bot{TOKEN}"
@@ -25,7 +25,7 @@ stats_db = {
     "total_income": 0
 }
 
-# پلن‌ها (قابل تغییر از داخل ربات)
+# پلن‌ها (قابل تغییر از داخل ربات توسط ادمین)
 PLANS = {
     "multi_10g": {"title": "مولتی لوکیشن | ۱۰ گیگ - ۳۰ روزه", "price": "60,000", "numeric_price": 60000},
     "multi_20g": {"title": "مولتی لوکیشن | ۲۰ گیگ - ۳۰ روزه", "price": "110,000", "numeric_price": 110000},
@@ -46,11 +46,19 @@ def set_bot_commands():
     ]
     requests.post(f"{URL}/setMyCommands", json={"commands": commands})
 
+# ارسال پیام جدید (برای شروع یا فیش)
 def send_msg(chat_id, text, keyboard=None, parse_mode="HTML"):
     payload = {"chat_id": chat_id, "text": text, "parse_mode": parse_mode}
     if keyboard:
         payload["reply_markup"] = keyboard
     return requests.post(f"{URL}/sendMessage", json=payload)
+
+# ویرایش پیام قبلی (برای منوها و کلیک‌ها بدون ارسال پیام جدید)
+def edit_msg(chat_id, message_id, text, keyboard=None, parse_mode="HTML"):
+    payload = {"chat_id": chat_id, "message_id": message_id, "text": text, "parse_mode": parse_mode}
+    if keyboard:
+        payload["reply_markup"] = keyboard
+    return requests.post(f"{URL}/editMessageText", json=payload)
 
 def send_photo(chat_id, photo_id, caption, keyboard=None, parse_mode="HTML"):
     payload = {"chat_id": chat_id, "photo": photo_id, "caption": caption, "parse_mode": parse_mode}
@@ -112,12 +120,11 @@ def run_bot():
                                 send_msg(chat_id, welcome_text, get_main_keyboard(user_id))
 
                             elif text == "/admin" and user_id == ADMIN_ID:
-                                show_admin_panel(chat_id)
+                                show_admin_panel(chat_id, msg.get("message_id"))
 
                             elif text == "/help":
                                 send_msg(chat_id, f"💬 <b>پشتیبانی فروشگاه آذین:</b>\n\nهمکاران ما آماده پاسخگویی به سوالات شما هستند:\n🆔 {SUPPORT_USERNAME}")
 
-                            # تغییر قیمت پلن توسط ادمین
                             elif user_sessions.get(chat_id, {}).get("step") == "admin_changing_price":
                                 p_key = user_sessions[chat_id]["target_plan"]
                                 try:
@@ -131,7 +138,6 @@ def run_bot():
                                 except ValueError:
                                     send_msg(chat_id, "⚠️ لطفاً قیمت را فقط به صورت عدد (مثلاً 80000) وارد کنید:")
 
-                            # دریافت نام سرور از مشتری
                             elif user_sessions.get(chat_id, {}).get("step") == "wait_for_name":
                                 user_sessions[chat_id]["server_name"] = text
                                 user_sessions[chat_id]["step"] = "wait_for_receipt"
@@ -158,7 +164,6 @@ def run_bot():
                                 )
                                 send_msg(chat_id, fact_text)
 
-                            # ادمین در حال ارسال کانفیگ به مشتری
                             elif user_sessions.get(chat_id, {}).get("step") == "admin_sending_config":
                                 target_user_id = user_sessions[chat_id]["target_user"]
                                 order_id = user_sessions[chat_id]["order_id"]
@@ -172,7 +177,7 @@ def run_bot():
                                             "count": order["count"],
                                             "server_name": order["server_name"],
                                             "config": text,
-                                            "date": time.strftime("%Y-%m-%d %H:%M")
+                                            "date": order["date"]
                                         })
 
                                 client_msg = (
@@ -183,7 +188,7 @@ def run_bot():
                                     f"🙏 <b>از اعتماد و انتخاب شما صمیمانه سپاسگزاریم — فروشگاه آذین</b>"
                                 )
                                 send_msg(target_user_id, client_msg)
-                                send_msg(chat_id, f"✅ سرور با موفقیت تحویل داده شد.")
+                                send_msg(chat_id, f"✅ سرور سفارش #{order_id} با موفقیت تحویل داده شد و در پرونده مشتری ثبت گردید.")
                                 user_sessions[chat_id] = {}
 
                         elif "photo" in msg and user_sessions.get(chat_id, {}).get("step") == "wait_for_receipt":
@@ -192,6 +197,9 @@ def run_bot():
                             plan_info = PLANS[session["plan_key"]]
                             
                             order_id = str(int(time.time()))
+                            order_date = time.strftime("%Y-%m-%d %H:%M")
+                            
+                            # ثبت مجزای سفارش در دیتابیس جامع
                             orders_db[order_id] = {
                                 "order_id": order_id,
                                 "user_id": chat_id,
@@ -202,7 +210,7 @@ def run_bot():
                                 "server_name": session['server_name'],
                                 "price": session['total_price_str'],
                                 "price_num": session['total_price_num'],
-                                "date": time.strftime("%Y-%m-%d %H:%M"),
+                                "date": order_date,
                                 "status": "Pending",
                                 "config": "در انتظار تحویل"
                             }
@@ -212,19 +220,19 @@ def run_bot():
                             send_msg(chat_id, "💌 <b>فیش واریزی شما دریافت شد!</b>\n\nدرخواست شما برای ادمین ارسال گردید و پس از تایید سریعاً سرویس تحویل شما می‌شود. از شکیبایی شما سپاسگزاریم.🌹")
 
                             admin_caption = (
-                                f"📥 <b>سفارش جدید دریافت شد!</b>\n\n"
-                                f"👤 <b>خریدار:</b> {first_name} (@{username})\n"
+                                f"📥 <b>ثبت سفارش جدید (کد: #{order_id})</b>\n\n"
+                                f"👤 <b>مشتری:</b> {first_name} (@{username})\n"
                                 f"🆔 <b>آیدی عددی:</b> <code>{chat_id}</code>\n"
+                                f"📅 <b>تاریخ ثبت:</b> {order_date}\n"
                                 f"🔹 <b>سرویس:</b> {plan_info['title']}\n"
                                 f"🔢 <b>تعداد:</b> {session['count']} عدد\n"
                                 f"🏷 <b>نام سرور:</b> {session['server_name']}\n"
-                                f"💰 <b>مبلغ:</b> {session['total_price_str']} تومان\n"
-                                f"🆔 <b>کد سفارش:</b> #{order_id}"
+                                f"💰 <b>مبلغ:</b> {session['total_price_str']} تومان"
                             )
                             admin_kb = {
                                 "inline_keyboard": [
                                     [
-                                        {"text": "✅ تایید پرداخت", "callback_data": f"approve_{order_id}"},
+                                        {"text": "✅ تایید پرداخت و ارسال", "callback_data": f"approve_{order_id}"},
                                         {"text": "❌ رد پرداخت", "callback_data": f"reject_{order_id}"}
                                     ]
                                 ]
@@ -236,6 +244,7 @@ def run_bot():
                         cb = update["callback_query"]
                         cb_id = cb["id"]
                         chat_id = cb["message"]["chat"]["id"]
+                        message_id = cb["message"]["message_id"]
                         data_key = cb["data"]
 
                         requests.post(f"{URL}/answerCallbackQuery", json={"callback_query_id": cb_id})
@@ -251,7 +260,7 @@ def run_bot():
                                     [{"text": "🔙 بازگشت به منو", "callback_data": "back_home"}]
                                 ]
                             }
-                            send_msg(chat_id, "🛒 <b>لطفاً دسته‌بندی سرویس مورد نظر خود را انتخاب کنید:</b>", buy_keyboard)
+                            edit_msg(chat_id, message_id, "🛒 <b>لطفاً دسته‌بندی سرویس مورد نظر خود را انتخاب کنید:</b>", buy_keyboard)
 
                         elif data_key == "cat_multi":
                             kb = {
@@ -262,7 +271,7 @@ def run_bot():
                                     [{"text": "🔙 بازگشت", "callback_data": "buy_service"}]
                                 ]
                             }
-                            send_msg(chat_id, "🌐 <b>پلن‌های مولتی لوکیشن (۳ کاربره):</b>", kb)
+                            edit_msg(chat_id, message_id, "🌐 <b>پلن‌های مولتی لوکیشن (۳ کاربره):</b>", kb)
 
                         elif data_key == "cat_melli":
                             kb = {
@@ -273,7 +282,7 @@ def run_bot():
                                     [{"text": "🔙 بازگشت", "callback_data": "buy_service"}]
                                 ]
                             }
-                            send_msg(chat_id, "🇮🇷 <b>پلن‌های ملی شکن (۲ کاربره):</b>", kb)
+                            edit_msg(chat_id, message_id, "🇮🇷 <b>پلن‌های ملی شکن (۲ کاربره):</b>", kb)
 
                         elif data_key == "cat_melli_unlim":
                             kb = {
@@ -282,7 +291,7 @@ def run_bot():
                                     [{"text": "🔙 بازگشت", "callback_data": "buy_service"}]
                                 ]
                             }
-                            send_msg(chat_id, "♾️ <b>پلن ملی شکن بدون محدودیت زمانی:</b>", kb)
+                            edit_msg(chat_id, message_id, "♾️ <b>پلن ملی شکن بدون محدودیت زمانی:</b>", kb)
 
                         elif data_key == "cat_multi_unlim":
                             kb = {
@@ -291,7 +300,7 @@ def run_bot():
                                     [{"text": "🔙 بازگشت", "callback_data": "buy_service"}]
                                 ]
                             }
-                            send_msg(chat_id, "🌐 <b>پلن مولتی لوکیشن بدون محدودیت زمانی:</b>", kb)
+                            edit_msg(chat_id, message_id, "🌐 <b>پلن مولتی لوکیشن بدون محدودیت زمانی:</b>", kb)
 
                         elif data_key == "cat_germany":
                             kb = {
@@ -300,7 +309,7 @@ def run_bot():
                                     [{"text": "🔙 بازگشت", "callback_data": "buy_service"}]
                                 ]
                             }
-                            send_msg(chat_id, "🇩🇪 <b>پلن اختصاصی آلمان (تک کاربره):</b>", kb)
+                            edit_msg(chat_id, message_id, "🇩🇪 <b>پلن اختصاصی آلمان (تک کاربره):</b>", kb)
 
                         elif data_key.startswith("plan_"):
                             plan_key = data_key.replace("plan_", "")
@@ -319,7 +328,7 @@ def run_bot():
                                     [{"text": "🔙 انصراف و بازگشت", "callback_data": "buy_service"}]
                                 ]
                             }
-                            send_msg(chat_id, text, kb)
+                            edit_msg(chat_id, message_id, text, kb)
 
                         elif data_key == "confirm_plan":
                             kb = {
@@ -329,7 +338,7 @@ def run_bot():
                                     [{"text": "🔙 انصراف", "callback_data": "buy_service"}]
                                 ]
                             }
-                            send_msg(chat_id, "🔢 <b>لطفاً تعداد سرویس مورد نیاز خود را انتخاب کنید:</b>", kb)
+                            edit_msg(chat_id, message_id, "🔢 <b>لطفاً تعداد سرویس مورد نیاز خود را انتخاب کنید:</b>", kb)
 
                         elif data_key.startswith("count_"):
                             count = int(data_key.split("_")[1])
@@ -345,7 +354,7 @@ def run_bot():
                                 f"🆔 <b>ارتباط با مدیر:</b> {SUPPORT_USERNAME}"
                             )
                             kb = {"inline_keyboard": [[{"text": "💬 پیام به مدیر ربات", "url": f"https://t.me/Brn_Az"}, {"text": "🔙 بازگشت", "callback_data": "back_home"}]]}
-                            send_msg(chat_id, apps_text, kb)
+                            edit_msg(chat_id, message_id, apps_text, kb)
 
                         elif data_key == "account":
                             user_info = users_db.get(chat_id, {"first_name": "کاربر", "username": "ندارد", "join_date": "نامشخص", "purchased_services": []})
@@ -359,24 +368,24 @@ def run_bot():
                                 f"🌹 <i>از همراهی و اعتماد شما سپاسگزاریم.</i>"
                             )
                             kb = {"inline_keyboard": [[{"text": "🔙 بازگشت به منوی اصلی", "callback_data": "back_home"}]]}
-                            send_msg(chat_id, acc_text, kb)
+                            edit_msg(chat_id, message_id, acc_text, kb)
 
                         elif data_key == "my_services":
                             user_info = users_db.get(chat_id, {"purchased_services": []})
                             services = user_info["purchased_services"]
                             
                             if not services:
-                                send_msg(chat_id, "💼 <b>شما هنوز هیچ سرویس فعالی خریداری نکرده‌اید.</b>", {"inline_keyboard": [[{"text": "🛒 خرید سرویس جدید", "callback_data": "buy_service"}, {"text": "🔙 بازگشت", "callback_data": "back_home"}]]})
+                                edit_msg(chat_id, message_id, "💼 <b>شما هنوز هیچ سرویس فعالی خریداری نکرده‌اید.</b>", {"inline_keyboard": [[{"text": "🛒 خرید سرویس جدید", "callback_data": "buy_service"}, {"text": "🔙 بازگشت", "callback_data": "back_home"}]]})
                             else:
                                 s_text = "💼 <b>سرویس‌های فعال و خریداری شده شما:</b>\n\n"
                                 for idx, s in enumerate(services, 1):
                                     s_text += (
                                         f"<b>{idx}. {s['title']}</b>\n"
                                         f"🏷 نام سرور: {s['server_name']}\n"
-                                        f"📅 تاریخ ثبت: {s['date']}\n"
+                                        f"📅 تاریخ خرید: {s['date']}\n"
                                         f"🔑 <code>{s['config']}</code>\n\n"
                                     )
-                                send_msg(chat_id, s_text, {"inline_keyboard": [[{"text": "🔙 بازگشت", "callback_data": "back_home"}]]})
+                                edit_msg(chat_id, message_id, s_text, {"inline_keyboard": [[{"text": "🔙 بازگشت", "callback_data": "back_home"}]]})
 
                         elif data_key.startswith("approve_"):
                             order_id = data_key.split("_")[1]
@@ -392,7 +401,7 @@ def run_bot():
                                     "target_user": order["user_id"],
                                     "order_id": order_id
                                 }
-                                send_msg(chat_id, f"✅ سفارش #{order_id} تایید گردید.\n\nلطفاً کانفیگ سرور را ارسال نمایید تا برای خریدار تحویل گردد:")
+                                send_msg(chat_id, f"✅ سفارش #{order_id} برای خریدار ({order['first_name']}) تایید شد.\n\nلطفاً کانفیگ سرور را ارسال نمایید تا به دستش برسد:")
 
                         elif data_key.startswith("reject_"):
                             order_id = data_key.split("_")[1]
@@ -406,16 +415,15 @@ def run_bot():
                                 send_msg(chat_id, f"❌ سفارش #{order_id} رد شد.")
 
                         elif data_key == "admin_panel" and chat_id == ADMIN_ID:
-                            show_admin_panel(chat_id)
+                            show_admin_panel(chat_id, message_id)
 
                         elif data_key == "admin_manage_plans" and chat_id == ADMIN_ID:
-                            # منوی ویرایش قیمت پلن‌ها
                             buttons = []
                             for p_key, p_val in PLANS.items():
-                                buttons.append([{"text": f"{p_val['title']} ({p_val['price']} تومان)", "callback_data": f"editplan_{p_key}"}])
+                                buttons.append([{"text": f"{p_val['title']} ({p_val['price']} ت)", "callback_data": f"editplan_{p_key}"}])
                             buttons.append([{"text": "🔙 بازگشت به پنل ادمین", "callback_data": "admin_panel"}])
                             
-                            send_msg(chat_id, "💰 <b>لطفاً پلنی که قصد تغییر قیمت آن را دارید انتخاب کنید:</b>", {"inline_keyboard": buttons})
+                            edit_msg(chat_id, message_id, "💰 <b>لطفاً پلنی که قصد تغییر قیمت آن را دارید انتخاب کنید:</b>", {"inline_keyboard": buttons})
 
                         elif data_key.startswith("editplan_") and chat_id == ADMIN_ID:
                             p_key = data_key.replace("editplan_", "")
@@ -427,25 +435,27 @@ def run_bot():
 
                         elif data_key == "admin_sold_list" and chat_id == ADMIN_ID:
                             if not orders_db:
-                                send_msg(chat_id, "📭 هیچ سفارشی ثبت نشده است.", {"inline_keyboard": [[{"text": "🔙 بازگشت", "callback_data": "admin_panel"}]]})
+                                edit_msg(chat_id, message_id, "📭 هیچ سفارشی تاکنون در سیستم ثبت نشده است.", {"inline_keyboard": [[{"text": "🔙 بازگشت", "callback_data": "admin_panel"}]]})
                             else:
-                                list_text = "📋 <b>لیست کامل سفارشات و فروش‌ها:</b>\n\n"
+                                list_text = "📋 <b>لیست تفکیک‌شده تمامی سفارشات ثبت شده:</b>\n\n"
                                 for oid, o in orders_db.items():
-                                    status_emoji = "⏳ در انتظار" if o['status'] == "Pending" else ("✅ تایید شده" if o['status'] == "Approved" else "❌ رد شده")
+                                    status_str = "⏳ در انتظار بررسی" if o['status'] == "Pending" else ("✅ تایید و تحویل شده" if o['status'] == "Approved" else "❌ رد شده")
                                     list_text += (
-                                        f"<b>وضعیت: {status_emoji} (کد: #{oid})</b>\n"
-                                        f"👤 کاربر: {o['first_name']} (@{o['username']})\n"
-                                        f"🔹 سرویس: {o['plan']}\n"
-                                        f"🔢 تعداد: {o['count']} | نام سرور: {o['server_name']}\n"
-                                        f"💰 مبلغ: {o['price']} تومان\n"
-                                        f"📅 تاریخ: {o['date']}\n"
-                                        f"-----------------------------------\n"
+                                        f"📌 <b>سفارش شماره #{oid}</b>\n"
+                                        f"👤 خریدار: {o['first_name']} (@{o['username']})\n"
+                                        f"🆔 شناسه: <code>{o['user_id']}</code>\n"
+                                        f"📅 تاریخ ثبت: {o['date']}\n"
+                                        f"🔹 نوع سرویس: {o['plan']}\n"
+                                        f"🔢 تعداد: {o['count']} عدد | نام سرور: {o['server_name']}\n"
+                                        f"💰 مبلغ پرداختی: {o['price']} تومان\n"
+                                        f"⚙️ وضعیت: {status_str}\n"
+                                        f"──────────────────────────\n"
                                     )
-                                send_msg(chat_id, list_text, {"inline_keyboard": [[{"text": "🔙 بازگشت", "callback_data": "admin_panel"}]]})
+                                edit_msg(chat_id, message_id, list_text, {"inline_keyboard": [[{"text": "🔙 بازگشت", "callback_data": "admin_panel"}]]})
 
                         elif data_key == "back_home":
                             user_sessions[chat_id] = {}
-                            send_msg(chat_id, "🏠 <b>منوی اصلی:</b>", get_main_keyboard(chat_id))
+                            edit_msg(chat_id, message_id, "🏠 <b>منوی اصلی:</b>", get_main_keyboard(chat_id))
 
                         elif data_key == "support":
                             send_msg(chat_id, f"💬 <b>پشتیبانی فروشگاه آذین:</b>\n\nآیدی ارتباط مستقیم با مدیر:\n🆔 {SUPPORT_USERNAME}")
@@ -454,25 +464,28 @@ def run_bot():
             print(f"Bot Error: {e}")
             time.sleep(3)
 
-def show_admin_panel(chat_id):
+def show_admin_panel(chat_id, message_id=None):
     admin_text = (
         f"⚙️ <b>پنل مدیریت پیشرفته فروشگاه آذین</b>\n\n"
-        f"📊 <b>آمار مالی و عملکرد:</b>\n"
-        f"▫️ کل سفارشات: {stats_db['total_orders']}\n"
+        f"📊 <b>آمار کل فروشگاه:</b>\n"
+        f"▫️ کل سفارشات ثبت‌شده: {stats_db['total_orders']}\n"
         f"⏳ در انتظار بررسی: {stats_db['pending_orders']}\n"
         f"✅ موفق و تحویل شده: {stats_db['approved_orders']}\n"
         f"❌ رد شده: {stats_db['rejected_orders']}\n"
-        f"💵 درآمد کل: {stats_db['total_income']:,} تومان\n"
+        f"💵 مجموع درآمد کل: {stats_db['total_income']:,} تومان\n"
     )
     kb = {
         "inline_keyboard": [
-            [{"text": "💰 مدیریت قیمت پلن‌ها", "callback_data": "admin_manage_plans"}],
-            [{"text": "📋 لیست سرویس‌های فروخته شده", "callback_data": "admin_sold_list"}],
+            [{"text": "💰 مدیریت و تغییر قیمت پلن‌ها", "callback_data": "admin_manage_plans"}],
+            [{"text": "📋 لیست جزئیات تمامی سفارشات", "callback_data": "admin_sold_list"}],
             [{"text": "🔄 بروزرسانی آمار", "callback_data": "admin_panel"}],
-            [{"text": "🏠 منوی اصلی", "callback_data": "back_home"}]
+            [{"text": "🏠 منوی اصلی ربات", "callback_data": "back_home"}]
         ]
     }
-    send_msg(chat_id, admin_text, kb)
+    if message_id:
+        edit_msg(chat_id, message_id, admin_text, kb)
+    else:
+        send_msg(chat_id, admin_text, kb)
 
 async def handle(request):
     return web.Response(text="Azin Bot is running!")
