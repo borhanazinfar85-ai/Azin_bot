@@ -781,3 +781,371 @@ def show_banned_list(message):
         text += f"👤 آیدی: `{uid}`\n⏰ تاریخ: {b_time}\n------------------\n"
     
     bot.reply_to(message, text)
+import os
+import uuid
+import base64
+import psycopg2
+from flask import Flask, Response
+import telebot
+
+# --- تنظیمات اتصال و ادمین ---
+DATABASE_URL = "postgresql://postgres.jxvnlwocfqrqjoarifty:Borhan27555@aws-0-eu-west-1.pooler.supabase.com:6543/postgres"
+ADMIN_ID = 5992998183  # آیدی عددی شما به عنوان ادمین ربات
+
+# راه‌اندازی ربات و وب‌سرور
+bot = telebot.TeleBot(os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE"))
+app = Flask(__name__)
+
+def get_db_connection():
+    return psycopg2.connect(DATABASE_URL)
+
+# --- توابع کمکی دیتابیس ---
+
+def is_user_banned(user_id: int) -> bool:
+    """بررسی اینکه آیا کاربر در لیست سیاه است یا خیر"""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT 1 FROM banned_users WHERE user_id = %s", (user_id,))
+    result = cur.fetchone()
+    cur.close()
+    conn.close()
+    return result is not None
+
+def get_or_create_sub_token(user_id: int, username: str) -> str:
+    """ساخت یا دریافت توکن منحصر‌به‌فرد لینک ساب برای کاربر"""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # بررسی وجود کاربر و توکن او
+    cur.execute("SELECT sub_token FROM users WHERE user_id = %s", (user_id,))
+    row = cur.fetchone()
+    
+    if row and row[0]:
+        token = row[0]
+    else:
+        token = str(uuid.uuid4()).replace('-', '')
+        cur.execute("""
+            INSERT INTO users (user_id, username, sub_token) 
+            VALUES (%s, %s, %s) 
+            ON CONFLICT (user_id) DO UPDATE SET sub_token = EXCLUDED.sub_token
+        """, (user_id, username, token))
+        conn.commit()
+        
+    cur.close()
+    conn.close()
+    return token
+
+# --- مسیر وب برای ارائه لینک ساب‌سکریپت (Subscription Endpoint) ---
+
+@app.route('/sub/<token>', methods=['GET'])
+def get_subscription(token):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # پیدا کردن کاربر با استفاده از توکن ساب
+    cur.execute("SELECT user_id FROM users WHERE sub_token = %s", (token,))
+    user_row = cur.fetchone()
+    
+    if not user_row:
+        cur.close()
+        conn.close()
+        return Response("Invalid Subscription Token", status=404)
+        
+    user_id = user_row[0]
+    
+    # اگر کاربر بن شده باشد، لینک ساب او را بی‌اعتبار و خالی می‌کنیم
+    if is_user_banned(user_id):
+        cur.close()
+        conn.close()
+        return Response("", mimetype='text/plain')
+    
+    # (اختیاری) خواندن کانفیگ‌های فعال کاربر از دیتابیس در آینده
+    # فعلاً یک متن نمونه برمی‌گردانیم
+    raw_configs = "vless://example-config-uuid@server:port?encryption=none&security=tls#Azin-VPN"
+    
+    # تبدیل کانفیگ‌ها به فرمت استاندارد Base64 برای برنامه‌های اتصال
+    encoded_configs = base64.b64encode(raw_configs.encode('utf-8')).decode('utf-8')
+    
+    cur.close()
+    conn.close()
+    return Response(encoded_configs, mimetype='text/plain')
+
+# --- هندلرهای تلگرام ---
+
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    user_id = message.from_user.id
+    username = message.from_user.username or "NoUsername"
+    
+    # بررسی مسدود بودن کاربر
+    if is_user_banned(user_id):
+        bot.reply_to(message, "❌ دسترسی شما به ربات به دلیل تخلف مسدود شده است.")
+        return
+
+    # دریافت یا ساخت لینک ساب اختصاصی
+    token = get_or_create_sub_token(user_id, username)
+    sub_url = f"https://azin-bot.onrender.com/sub/{token}"
+    
+    welcome_text = (
+        "سلام! به ربات فروش VPN خوش آمدید. 🌹\n\n"
+        f"🔗 **لینک ساب‌سکریپت اختصاصی شما:**\n`{sub_url}`\n\n"
+        "📱 این لینک را کپی کرده و در برنامه v2rayNG یا Hiddify در بخش Subscription وارد کنید."
+    )
+    bot.reply_to(message, welcome_text, parse_mode="Markdown")
+
+# --- دستورات مدیریتی ادمین ---
+
+@bot.message_handler(commands=['ban'])
+def ban_user(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    args = message.text.split()
+    target_id = None
+    
+    if len(args) > 1:
+        target_id = int(args[1])
+    elif message.reply_to_message:
+        target_id = message.reply_to_message.from_user.id
+
+    if target_id:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        try:
+            cur.execute("INSERT INTO banned_users (user_id) VALUES (%s) ON CONFLICT (user_id) DO NOTHING", (target_id,))
+            conn.commit()
+            bot.reply_to(message, f"❌ کاربر `{target_id}` با موفقیت بن شد و لینک ساب او قطع گردید.")
+        except Exception as e:
+            bot.reply_to(message, f"خطا در اجرای بن: {e}")
+        finally:
+            cur.close()
+            conn.close()
+    else:
+        bot.reply_to(message, "راهنما: روی پیام کاربر ریپلای کنید یا بنویسید:\n`/ban 12345678`", parse_mode="Markdown")
+
+@bot.message_handler(commands=['unban'])
+def unban_user(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    args = message.text.split()
+    if len(args) > 1:
+        try:
+            target_id = int(args[1])
+            conn = get_db_connection()
+            cur = conn.cursor()
+            cur.execute("DELETE FROM banned_users WHERE user_id = %s", (target_id,))
+            conn.commit()
+            cur.close()
+            conn.close()
+            bot.reply_to(message, f"✅ کاربر `{target_id}` از لیست سیاه خارج (آن‌بن) شد.")
+        except Exception as e:
+            bot.reply_to(message, f"خطا: {e}")
+    else:
+        bot.reply_to(message, "راهنما:\n`/unban 12345678`", parse_mode="Markdown")
+
+@bot.message_handler(commands=['banned_list'])
+def show_banned_list(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT user_id, banned_at FROM banned_users ORDER BY banned_at DESC")
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    if not rows:
+        bot.reply_to(message, "📋 لیست کاربران مسدود شده خالی است.")
+        return
+
+    text = "📋 **لیست کاربران مسدود شده:**\n\n"
+    for row in rows:
+        text += f"👤 آیدی: `{row[0]}`\n⏰ تاریخ: {row[1]}\n------------------\n"
+    
+    bot.reply_to(message, text, parse_mode="Markdown")
+import os
+import uuid
+import base64
+import psycopg2
+from flask import Flask, Response
+import telebot
+
+# --- تنظیمات اتصال و ادمین ---
+DATABASE_URL = "postgresql://postgres.jxvnlwocfqrqjoarifty:Borhan27555@aws-0-eu-west-1.pooler.supabase.com:6543/postgres"
+ADMIN_ID = 5992998183  # آیدی عددی شما به عنوان ادمین ربات
+
+# راه‌اندازی ربات و وب‌سرور
+bot = telebot.TeleBot(os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE"))
+app = Flask(__name__)
+
+def get_db_connection():
+    return psycopg2.connect(DATABASE_URL)
+
+# --- توابع کمکی دیتابیس ---
+
+def is_user_banned(user_id: int) -> bool:
+    """بررسی اینکه آیا کاربر در لیست سیاه است یا خیر"""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT 1 FROM banned_users WHERE user_id = %s", (user_id,))
+    result = cur.fetchone()
+    cur.close()
+    conn.close()
+    return result is not None
+
+def get_or_create_sub_token(user_id: int, username: str) -> str:
+    """ساخت یا دریافت توکن منحصر‌به‌فرد لینک ساب برای کاربر"""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # بررسی وجود کاربر و توکن او
+    cur.execute("SELECT sub_token FROM users WHERE user_id = %s", (user_id,))
+    row = cur.fetchone()
+    
+    if row and row[0]:
+        token = row[0]
+    else:
+        token = str(uuid.uuid4()).replace('-', '')
+        cur.execute("""
+            INSERT INTO users (user_id, username, sub_token) 
+            VALUES (%s, %s, %s) 
+            ON CONFLICT (user_id) DO UPDATE SET sub_token = EXCLUDED.sub_token
+        """, (user_id, username, token))
+        conn.commit()
+        
+    cur.close()
+    conn.close()
+    return token
+
+# --- مسیر وب برای ارائه لینک ساب‌سکریپت (Subscription Endpoint) ---
+
+@app.route('/sub/<token>', methods=['GET'])
+def get_subscription(token):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # پیدا کردن کاربر با استفاده از توکن ساب
+    cur.execute("SELECT user_id FROM users WHERE sub_token = %s", (token,))
+    user_row = cur.fetchone()
+    
+    if not user_row:
+        cur.close()
+        conn.close()
+        return Response("Invalid Subscription Token", status=404)
+        
+    user_id = user_row[0]
+    
+    # اگر کاربر بن شده باشد، لینک ساب او را بی‌اعتبار و خالی می‌کنیم
+    if is_user_banned(user_id):
+        cur.close()
+        conn.close()
+        return Response("", mimetype='text/plain')
+    
+    # (اختیاری) خواندن کانفیگ‌های فعال کاربر از دیتابیس در آینده
+    # فعلاً یک متن نمونه برمی‌گردانیم
+    raw_configs = "vless://example-config-uuid@server:port?encryption=none&security=tls#Azin-VPN"
+    
+    # تبدیل کانفیگ‌ها به فرمت استاندارد Base64 برای برنامه‌های اتصال
+    encoded_configs = base64.b64encode(raw_configs.encode('utf-8')).decode('utf-8')
+    
+    cur.close()
+    conn.close()
+    return Response(encoded_configs, mimetype='text/plain')
+
+# --- هندلرهای تلگرام ---
+
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    user_id = message.from_user.id
+    username = message.from_user.username or "NoUsername"
+    
+    # بررسی مسدود بودن کاربر
+    if is_user_banned(user_id):
+        bot.reply_to(message, "❌ دسترسی شما به ربات به دلیل تخلف مسدود شده است.")
+        return
+
+    # دریافت یا ساخت لینک ساب اختصاصی
+    token = get_or_create_sub_token(user_id, username)
+    sub_url = f"https://azin-bot.onrender.com/sub/{token}"
+    
+    welcome_text = (
+        "سلام! به ربات فروش VPN خوش آمدید. 🌹\n\n"
+        f"🔗 **لینک ساب‌سکریپت اختصاصی شما:**\n`{sub_url}`\n\n"
+        "📱 این لینک را کپی کرده و در برنامه v2rayNG یا Hiddify در بخش Subscription وارد کنید."
+    )
+    bot.reply_to(message, welcome_text, parse_mode="Markdown")
+
+# --- دستورات مدیریتی ادمین ---
+
+@bot.message_handler(commands=['ban'])
+def ban_user(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    args = message.text.split()
+    target_id = None
+    
+    if len(args) > 1:
+        target_id = int(args[1])
+    elif message.reply_to_message:
+        target_id = message.reply_to_message.from_user.id
+
+    if target_id:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        try:
+            cur.execute("INSERT INTO banned_users (user_id) VALUES (%s) ON CONFLICT (user_id) DO NOTHING", (target_id,))
+            conn.commit()
+            bot.reply_to(message, f"❌ کاربر `{target_id}` با موفقیت بن شد و لینک ساب او قطع گردید.")
+        except Exception as e:
+            bot.reply_to(message, f"خطا در اجرای بن: {e}")
+        finally:
+            cur.close()
+            conn.close()
+    else:
+        bot.reply_to(message, "راهنما: روی پیام کاربر ریپلای کنید یا بنویسید:\n`/ban 12345678`", parse_mode="Markdown")
+
+@bot.message_handler(commands=['unban'])
+def unban_user(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    args = message.text.split()
+    if len(args) > 1:
+        try:
+            target_id = int(args[1])
+            conn = get_db_connection()
+            cur = conn.cursor()
+            cur.execute("DELETE FROM banned_users WHERE user_id = %s", (target_id,))
+            conn.commit()
+            cur.close()
+            conn.close()
+            bot.reply_to(message, f"✅ کاربر `{target_id}` از لیست سیاه خارج (آن‌بن) شد.")
+        except Exception as e:
+            bot.reply_to(message, f"خطا: {e}")
+    else:
+        bot.reply_to(message, "راهنما:\n`/unban 12345678`", parse_mode="Markdown")
+
+@bot.message_handler(commands=['banned_list'])
+def show_banned_list(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT user_id, banned_at FROM banned_users ORDER BY banned_at DESC")
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    if not rows:
+        bot.reply_to(message, "📋 لیست کاربران مسدود شده خالی است.")
+        return
+
+    text = "📋 **لیست کاربران مسدود شده:**\n\n"
+    for row in rows:
+        text += f"👤 آیدی: `{row[0]}`\n⏰ تاریخ: {row[1]}\n------------------\n"
+    
+    bot.reply_to(message, text, parse_mode="Markdown")
