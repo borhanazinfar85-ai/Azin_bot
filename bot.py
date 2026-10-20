@@ -675,7 +675,7 @@ def get_db_connection():
     return psycopg2.connect(DATABASE_URL)
 
 # ۱. تابع بررسی اینکه آیا کاربر بن شده است یا خیر
-TGBOT_ADMIN_ID = 123456789  # آیدی تلگرامی خودت رو اینجا بزار تا فقط ادمین بتونه بن کنه
+TGBOT_ADMIN_ID = 5992998183  # آیدی تلگرامی خودت رو اینجا بزار تا فقط ادمین بتونه بن کنه
 
 def is_user_banned(user_id: int) -> bool:
     conn = get_db_connection()
