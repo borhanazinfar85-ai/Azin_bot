@@ -665,3 +665,26 @@ if __name__ == "__main__":
 
     port = int(os.environ.get("PORT", 10000))
     web.run_app(app, host="0.0.0.0", port=port)
+import psycopg2
+# (فرض بر این است که متصل‌کننده دیتابیس و کتابخانه تلگرام پایتون از قبل تنظیم شده‌اند)
+
+# اتصال به دیتابیس Supabase شما
+DATABASE_URL = "postgresql://postgres.jxvnlwocfqrqjoarifty:Borhan27555@aws-0-eu-west-1.pooler.supabase.com:6543/postgres"
+
+def get_db_connection():
+    return psycopg2.connect(DATABASE_URL)
+
+# ۱. تابع بررسی اینکه آیا کاربر بن شده است یا خیر
+TGBOT_ADMIN_ID = 123456789  # آیدی تلگرامی خودت رو اینجا بزار تا فقط ادمین بتونه بن کنه
+
+def is_user_banned(user_id: int) -> bool:
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT 1 FROM banned_users WHERE user_id = %s", (user_id,))
+    result = cur.fetchone()
+    cur.close()
+    conn.close()
+    return result is not None
+
+# ۲. تابع دستور بن کردن (مثلا: /ban 12345678 یا ریپلای روی پیام کاربر)
+# این بخش بسته به ساختار کتابخانه‌ای که استفاده می‌کنید (مثل pyTelegramBotAPI یا aiogram) پیاده می‌شود:
