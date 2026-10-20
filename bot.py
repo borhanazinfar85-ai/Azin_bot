@@ -688,3 +688,96 @@ def is_user_banned(user_id: int) -> bool:
 
 # ۲. تابع دستور بن کردن (مثلا: /ban 12345678 یا ریپلای روی پیام کاربر)
 # این بخش بسته به ساختار کتابخانه‌ای که استفاده می‌کنید (مثل pyTelegramBotAPI یا aiogram) پیاده می‌شود:
+import psycopg2
+
+# اتصال به دیتابیس Supabase
+DATABASE_URL = "postgresql://postgres.jxvnlwocfqrqjoarifty:Borhan27555@aws-0-eu-west-1.pooler.supabase.com:6543/postgres"
+ADMIN_ID = 5992998183
+
+def get_db_connection():
+    return psycopg2.connect(DATABASE_URL)
+
+# ۱. تابع بررسی مسدود بودن کاربر (برای قرار دادن در ابتدای ربات)
+def is_user_banned(user_id: int) -> bool:
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT 1 FROM banned_users WHERE user_id = %s", (user_id,))
+    result = cur.fetchone()
+    cur.close()
+    conn.close()
+    return result is not None
+
+# ۲. دستور بن کردن کاربر (/ban)
+@bot.message_handler(commands=['ban'])
+def ban_user(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    args = message.text.split()
+    target_id = None
+    
+    if len(args) > 1:
+        target_id = int(args[1])
+    elif message.reply_to_message:
+        target_id = message.reply_to_message.from_user.id
+
+    if target_id:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        try:
+            cur.execute("INSERT INTO banned_users (user_id) VALUES (%s) ON CONFLICT (user_id) DO NOTHING", (target_id,))
+            conn.commit()
+            bot.reply_to(message, f"❌ کاربر با آیدی `{target_id}` با موفقیت بن شد.")
+        except Exception as e:
+            bot.reply_to(message, f"خطا: {e}")
+        finally:
+            cur.close()
+            conn.close()
+    else:
+        bot.reply_to(message, "لطفاً آیدی کاربر را وارد کنید یا روی پیامش ریپلای بزنید.\nمثال: `/ban 12345678`")
+
+# ۳. دستور آن‌بن کردن کاربر (/unban)
+@bot.message_handler(commands=['unban'])
+def unban_user(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    args = message.text.split()
+    if len(args) > 1:
+        try:
+            target_id = int(args[1])
+            conn = get_db_connection()
+            cur = conn.cursor()
+            cur.execute("DELETE FROM banned_users WHERE user_id = %s", (target_id,))
+            conn.commit()
+            cur.close()
+            conn.close()
+            bot.reply_to(message, f"✅ کاربر با آیدی `{target_id}` از لیست سیاه خارج (آن‌بن) شد.")
+        except Exception as e:
+            bot.reply_to(message, f"خطا در آن‌بن کردن: {e}")
+    else:
+        bot.reply_to(message, "لطفاً آیدی کاربر را جلو از دستور بنویسید.\nمثال: `/unban 12345678`")
+
+# ۴. دستور مشاهده لیست مسدودشده‌ها (/banned_list)
+@bot.message_handler(commands=['banned_list'])
+def show_banned_list(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT user_id, banned_at FROM banned_users ORDER BY banned_at DESC")
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    if not rows:
+        bot.reply_to(message, "📋 لیست مسدودشده‌ها خالی است.")
+        return
+
+    text = "📋 **لیست کاربران مسدود شده:**\n\n"
+    for row in rows:
+        uid, b_time = row
+        text += f"👤 آیدی: `{uid}`\n⏰ تاریخ: {b_time}\n------------------\n"
+    
+    bot.reply_to(message, text)
